@@ -1,3 +1,9 @@
+###########################################
+#
+# GPU version for pyxelate
+#
+###########################################
+
 import warnings
 
 import numpy as np
@@ -14,7 +20,7 @@ from sklearn.mixture import BayesianGaussianMixture
 try:
     from .pal import BasePalette
 except ImportError:
-    # 简单的 fallback，防止没有 pal 模块报错
+
     class BasePalette:
         pass
 
@@ -26,7 +32,6 @@ from typing import Optional, Union, Tuple
 
 
 def rgb2hsv_torch(rgb: torch.Tensor) -> torch.Tensor:
-    """PyTorch 实现的 rgb2hsv (输入 0-1, 输出 h(0-1)sv)"""
     cmax, cmax_idx = torch.max(rgb, dim=1, keepdim=True)
     cmin = torch.min(rgb, dim=1, keepdim=True)[0]
     delta = cmax - cmin
@@ -35,13 +40,14 @@ def rgb2hsv_torch(rgb: torch.Tensor) -> torch.Tensor:
     s = torch.zeros_like(cmax)
     v = cmax
 
-    mask_delta = (delta > 1e-8).squeeze()
+    mask_delta = delta > 1e-8
 
     # Saturation
     s[mask_delta] = delta[mask_delta] / cmax[mask_delta]
 
     # Hue
     r, g, b = rgb[:, 0:1], rgb[:, 1:2], rgb[:, 2:3]
+
     idx = (cmax_idx == 0) & mask_delta  # Red is max
     h[idx] = (g[idx] - b[idx]) / delta[idx] % 6
 
@@ -744,69 +750,101 @@ class Pyx(BaseEstimator, TransformerMixin):
             # Requires predict_proba
             probs = self.model.predict_proba(X_reshaped_np)
             # Conversion to GPU for math
-            probs_t = torch.from_numpy(probs).to(self.device).float()
+            probs_t = torch.from_numpy(probs).to(self.device).float()  # [N, C]
 
-            p = torch.argmax(probs_t, dim=1)
+            # 1. Find best and second best colors
+            max_probs_orig, p = torch.max(
+                probs_t, dim=1
+            )  # p is the index of the best color (p1)
 
-            # Zero out best
-            rows = torch.arange(len(p), device=self.device)
-            probs_t[rows, p] = 0
+            # Zero out best's probability to find second best
+            probs_temp = probs_t.clone()
+            rows = torch.arange(len(max_probs_orig), device=self.device)
+            probs_temp[rows, p] = 0
 
-            p2 = torch.argmax(probs_t, dim=1)  # Second best
+            max_probs_temp, p2 = torch.max(
+                probs_temp, dim=1
+            )  # p2 is the index of the second best color
 
-            # Logic: v1 > threshold
-            # v1 was max prob (we need original max)
-            # Re-get max from original numpy or store it
-            probs_orig = torch.from_numpy(probs).to(self.device).float()
-            max_probs, _ = torch.max(probs_orig, dim=1)
+            # 2. Dithering Thresholds
+            v1 = max_probs_orig > (1.0 / (len(colors_flat) + 1))
+            v2 = max_probs_orig > (
+                1.0 / (len(colors_flat) * self.DITHER_NAIVE_BOOST + 1)
+            )
 
-            v1 = max_probs > (1.0 / (len(colors_flat) + 1))
-            v2 = max_probs > (1.0 / (len(colors_flat) * self.DITHER_NAIVE_BOOST + 1))
+            # Construct result tensors for best and second best (Full N length)
+            res = colors_gpu[p]  # [N, 3]
+            res_p2 = colors_gpu[p2]  # [N, 3]
 
-            # Construct result
-            res = colors_gpu[p]
-            res_p2 = colors_gpu[p2]
+            # 3. Vectorized Index Selection and Logic (Simulating the Original Loop)
 
-            # Grid logic
-            # i ranges 0..len(X)
-            # m = (i // final_w) % 2
-            # Vectorized grid generation
             idx = torch.arange(len(res), device=self.device)
-            # We are flattening [B, H, W]. W is final_w
-            y_coords = idx // final_w
-            m = y_coords % 2
+            N = len(res)
+
+            # --- Determine which index 'i' is selected by the original loop ---
+
+            # Original loop: for i in range(0, N, 2): ... if pad: i += m
+            # The indices processed are: 0, 2, 4, ... initially.
+            # Then, if pad, i is conditionally shifted by 1.
+
+            # Step 1: Base indices (0, 2, 4, ...)
+            base_indices = torch.arange(0, N, 2, device=self.device)
+
+            final_indices = base_indices.clone()
 
             pad = (final_w % 2) == 0
+
             if pad:
-                # i += m logic is tricky in vector.
-                # effectively checks parity of checkerboard.
-                # standard checkerboard: (x+y)%2
-                x_coords = idx % final_w
-                checker = (x_coords + y_coords) % 2
-            else:
-                # If width is odd, simple alternation works linearly
-                checker = idx % 2  # Roughly, but original logic is specific
-                # Original: for i in range(0, len, 2): m = (i // w)%2; if pad: i+=m.
-                # This suggests a checkerboard pattern.
-                # Let's stick to simple checkerboard (x+y)%2 for "Naive" dither logic approximation
-                x_coords = idx % final_w
-                checker = (x_coords + y_coords) % 2
+                # Original: m = (i // final_w) % 2; if pad: i += m
+                # We need to calculate 'm' for the BASE indices (0, 2, 4, ...)
+                m = (base_indices // final_w) % 2
 
-            # Vectorized condition
-            # if m (checker): if v1: use p2
-            # else: if v2: use p2
+                # Where m=1, the base index is shifted by 1.
+                shift_mask = m == 1
+                final_indices[shift_mask] = base_indices[shift_mask] + 1
+                # Where m=0, the base index remains the same (shift 0).
 
-            mask_use_p2 = torch.zeros_like(v1, dtype=torch.bool)
+                # Example for final_w=4:
+                # Base i: 0, 2, 4, 6, 8, 10, 12, 14
+                # Row:    0, 0, 1, 1, 2, 2,  3,  3
+                # m:      0, 0, 1, 1, 0, 0,  1,  1
+                # Final i:0, 2, 5, 7, 8, 10, 13, 15  <- This accurately recreates the indices.
 
-            # Condition 1 (Checker active)
-            c1 = (checker == 1) & v1
-            # Condition 2 (Checker inactive)
-            c2 = (checker == 0) & v2
+            # Now, we create a mask to know which *original* indices (0 to N-1) were selected.
+            # mask_selected: True only for pixels that were modified by the loop.
+            mask_selected = torch.zeros(N, dtype=torch.bool, device=self.device)
 
-            mask_use_p2 = c1 | c2
+            # Ensure indices are within bounds (should be, but safety check)
+            valid_indices = final_indices[final_indices < N]
+            mask_selected[valid_indices] = True
 
-            # Apply
-            final_res = torch.where(mask_use_p2.unsqueeze(1), res_p2, res)
+            # --- Determine the Dither Logic Mask (if selected, should we use p2?) ---
+
+            # The logic only applies to the *selected* indices:
+            # - m = (i // final_w) % 2 calculated from the *shifted* index 'i' (which is valid_indices)
+
+            # m_final: row parity of the *selected* pixels
+            m_final = (valid_indices // final_w) % 2
+
+            # Condition 1: m_final is 1 (odd row), AND v1 is True
+            cond_m1 = (m_final == 1) & v1[valid_indices]
+
+            # Condition 2: m_final is 0 (even row), AND v2 is True
+            cond_m0 = (m_final == 0) & v2[valid_indices]
+
+            # mask_p2_selected: True for selected pixels that should switch to p2
+            mask_p2_selected = cond_m1 | cond_m0
+
+            # --- Apply Dithering ---
+
+            # Start with the best color for ALL pixels
+            final_res = res.clone()
+
+            # Replace the selected pixels that meet the dither condition with p2
+            final_res[valid_indices[mask_p2_selected]] = res_p2[
+                valid_indices[mask_p2_selected]
+            ]
+
             result_flat = final_res
 
         elif self.dither == "bayer":

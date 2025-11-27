@@ -1,10 +1,7 @@
 import numpy as np
 import torch
 
-from .color import ColorConverter
-from .utils.pyxelate.pyx import Pyx
-
-abc = ColorConverter
+from .core.pyxelate.pyx import Pyx
 
 
 class Image:
@@ -95,12 +92,12 @@ class PyxelateTransform(Image):
                     },
                 ),
                 # Description: Apply a truncated SVD (n_components=32) on each RGB channel as a form of low-pass filter.
-                # Default is True.
+                # Default is False.
                 "svd": (
                     "BOOLEAN",
                     {
-                        "default": True,
-                        "tooltip": "Apply a truncated SVD (n_components=32) on each RGB channel as a form of low-pass filter. Default is True.",
+                        "default": False,
+                        "tooltip": "Apply a truncated SVD (n_components=32) on each RGB channel as a form of low-pass filter. Default is False.",
                     },
                 ),
                 # Description: For images with transparency, the transformed image's pixel will be either visible/invisible above/below this threshold.
@@ -203,10 +200,15 @@ class PyxelateTransform(Image):
             )
 
             # Transform
-            processed_np = pyx_transformer.fit_transform(img_np)
+            processed_result = pyx_transformer.fit_transform(img_np)
 
-            # Numpy uint8 -> Tensor (0.0-1.0)
-            processed_tensor = torch.from_numpy(processed_np.astype(np.float32) / 255.0)
+            if isinstance(processed_result, torch.Tensor):
+                processed_tensor = processed_result.detach().cpu().squeeze(0)
+            else:
+                processed_tensor = torch.from_numpy(
+                    processed_result.astype(np.float32) / 255.0
+                )
+
             results.append(processed_tensor)
 
         return (torch.stack(results),)

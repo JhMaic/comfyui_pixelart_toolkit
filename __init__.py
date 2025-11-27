@@ -4,6 +4,7 @@ __author__ = """Justin Chan"""
 __email__ = "owcin.cjh@gmail.com"
 __version__ = "0.0.1"
 
+import glob
 import importlib.util
 import inspect
 import os
@@ -57,63 +58,56 @@ NODE_DISPLAY_NAME_MAPPINGS = {}
 
 
 def load_nodes():
-    # 获取当前文件的绝对路径
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    # 拼接节点目录路径
-    nodes_path = os.path.join(current_dir, NODE_DIR_NAME)
+    # 获取当前文件所在目录
+    current_dir = os.path.dirname(__file__)
 
-    # 检查目录是否存在
-    if not os.path.exists(nodes_path):
-        print(f"Skipping node loading: {nodes_path} does not exist.")
-        return
+    # 获取当前包名 (即 comfyui_pixelart_utils)
+    package_name = __name__
 
-    # 遍历目录下的所有文件
-    for filename in os.listdir(nodes_path):
-        if filename.endswith(".py") and not filename.startswith("__"):
-            file_path = os.path.join(nodes_path, filename)
-            module_name = filename[:-3]  # 去掉 .py 后缀
+    # 扫描当前目录下的所有 .py 文件
+    # 使用 glob 可以更方便地过滤
+    py_files = glob.glob(os.path.join(current_dir, "*.py"))
 
-            try:
-                # 动态导入模块
-                spec = importlib.util.spec_from_file_location(module_name, file_path)
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[module_name] = module
-                spec.loader.exec_module(module)
+    for file_path in py_files:
+        filename = os.path.basename(file_path)
 
-                # 扫描模块中的类
-                for name, cls in inspect.getmembers(module, inspect.isclass):
-                    # 关键逻辑：如何判断一个类是不是 ComfyUI 节点？
-                    # 通常节点类必须包含 INPUT_TYPES 方法和 FUNCTION 属性
-                    if hasattr(cls, "INPUT_TYPES") and hasattr(cls, "FUNCTION"):
+        # 跳过 __init__.py 和其他非节点文件
+        if filename.startswith("__") or filename.startswith("."):
+            continue
 
-                        # 1. 确定节点 ID (Key)
-                        # 如果类里定义了 OUTPUT_NODE = True 等属性也可以在这里判断
-                        # 优先使用类中定义的别名，否则使用类名
-                        node_key = name
+        module_name = filename[:-3]  # 去掉 .py
 
-                        # 2. 注册到 CLASS MAPPINGS
-                        if node_key in NODE_CLASS_MAPPINGS:
-                            print(
-                                f"Warning: Duplicate node name '{node_key}' found in {filename}, skipping."
-                            )
-                            continue
+        try:
+            # 【关键修复】
+            # 使用 import_module 进行相对导入 (例如: .image)
+            # 这样 Python 知道它是包的一部分，image.py 里的 from .core 就能工作了
+            module = importlib.import_module(f".{module_name}", package=package_name)
 
-                        NODE_CLASS_MAPPINGS[node_key] = cls
+            # 扫描模块中的类
+            for name, cls in inspect.getmembers(module, inspect.isclass):
+                if hasattr(cls, "INPUT_TYPES") and hasattr(cls, "FUNCTION"):
 
-                        # 3. 注册到 DISPLAY NAME MAPPINGS
-                        # 你的示例中使用了 .title 属性，这里做兼容处理
-                        if hasattr(cls, "title"):
-                            NODE_DISPLAY_NAME_MAPPINGS[node_key] = cls.title
-                        elif hasattr(cls, "TITLE"):  # ComfyUI 社区有时也用 TITLE
-                            NODE_DISPLAY_NAME_MAPPINGS[node_key] = cls.TITLE
-                        else:
-                            # 如果没有定义标题，使用类名并插入空格（可选）
-                            NODE_DISPLAY_NAME_MAPPINGS[node_key] = node_key
+                    # 确定节点 ID
+                    node_key = name
 
-                        print(f"Loaded node: {node_key}")
+                    if node_key in NODE_CLASS_MAPPINGS:
+                        continue
 
-            except Exception as e:
-                print(f"Error loading module {filename}: {e}")
+                    NODE_CLASS_MAPPINGS[node_key] = cls
+
+                    # 处理显示名称
+                    if hasattr(cls, "TITLE"):
+                        NODE_DISPLAY_NAME_MAPPINGS[node_key] = cls.TITLE
+                    elif hasattr(cls, "title"):
+                        NODE_DISPLAY_NAME_MAPPINGS[node_key] = cls.title
+                    else:
+                        NODE_DISPLAY_NAME_MAPPINGS[node_key] = node_key
+
+                    # print(f"Loaded Node: {node_key}")
+
+        except Exception as e:
+            # 打印详细错误方便调试
+            print(f"Error loading module {filename}: {e}")
 
 
 # 执行加载
