@@ -747,105 +747,79 @@ class Pyx(BaseEstimator, TransformerMixin):
             )
 
         elif self.dither == "naive":
-            # Requires predict_proba
-            probs = self.model.predict_proba(X_reshaped_np)
-            # Conversion to GPU for math
-            probs_t = torch.from_numpy(probs).to(self.device).float()  # [N, C]
+            # 1. 获取概率 (CPU -> GPU)
+            # predict_proba 返回的是 numpy，需要转为 Tensor
+            probs_np = self.model.predict_proba(X_reshaped_np)  # [N, C]
+            probs = torch.from_numpy(probs_np).to(self.device).float()
 
-            # 1. Find best and second best colors
-            max_probs_orig, p = torch.max(
-                probs_t, dim=1
-            )  # p is the index of the best color (p1)
+            # 2. 找出第一选择 (p1) 和 第二选择 (p2)
+            # 获取最大概率和对应索引 (Best color)
+            prob_p1, p1_idx = torch.max(probs, dim=1)
 
-            # Zero out best's probability to find second best
-            probs_temp = probs_t.clone()
-            rows = torch.arange(len(max_probs_orig), device=self.device)
-            probs_temp[rows, p] = 0
+            # --- 关键修正 1：计算阈值前，必须基于“第二大”概率 ---
+            # 将最大概率位置置 0，以便找到第二大的概率
+            probs_temp = probs.clone()
+            probs_temp.scatter_(1, p1_idx.unsqueeze(1), 0.0)
 
-            max_probs_temp, p2 = torch.max(
-                probs_temp, dim=1
-            )  # p2 is the index of the second best color
+            # 获取第二大概率和对应索引 (Second best color)
+            prob_p2, p2_idx = torch.max(probs_temp, dim=1)
 
-            # 2. Dithering Thresholds
-            v1 = max_probs_orig > (1.0 / (len(colors_flat) + 1))
-            v2 = max_probs_orig > (
-                1.0 / (len(colors_flat) * self.DITHER_NAIVE_BOOST + 1)
-            )
+            # 3. 计算阈值
+            # 原版逻辑：v1 和 v2 是判断“第二选择”的概率是否足够大
+            n_colors = len(colors_flat)
+            threshold_v1 = 1.0 / (n_colors + 1)
+            threshold_v2 = 1.0 / (n_colors * self.DITHER_NAIVE_BOOST + 1)
 
-            # Construct result tensors for best and second best (Full N length)
-            res = colors_gpu[p]  # [N, 3]
-            res_p2 = colors_gpu[p2]  # [N, 3]
+            v1 = prob_p2 > threshold_v1
+            v2 = prob_p2 > threshold_v2
 
-            # 3. Vectorized Index Selection and Logic (Simulating the Original Loop)
+            # 4. 初始化结果为最佳颜色
+            # 此时 X_final 全是 p1 颜色
+            X_final = colors_gpu[p1_idx]
 
-            idx = torch.arange(len(res), device=self.device)
-            N = len(res)
+            # 5. 向量化棋盘格逻辑 (Checkerboard Pattern)
+            N = len(X_final)
 
-            # --- Determine which index 'i' is selected by the original loop ---
-
-            # Original loop: for i in range(0, N, 2): ... if pad: i += m
-            # The indices processed are: 0, 2, 4, ... initially.
-            # Then, if pad, i is conditionally shifted by 1.
-
-            # Step 1: Base indices (0, 2, 4, ...)
+            # 生成基础索引：0, 2, 4, ... (模拟 range(0, N, 2))
             base_indices = torch.arange(0, N, 2, device=self.device)
 
-            final_indices = base_indices.clone()
+            # 计算行号和行的奇偶性 (m)
+            # 原版：m = (i // final_w) % 2。这里的 i 对应 base_indices
+            rows = base_indices // final_w
+            m = rows % 2  # 1 为奇数行，0 为偶数行
 
-            pad = (final_w % 2) == 0
+            # 判断是否需要补位偏移 (pad)
+            # 原版：pad = not bool(final_w % 2)。如果宽度是偶数，则 pad 为 True
+            pad = final_w % 2 == 0
 
-            if pad:
-                # Original: m = (i // final_w) % 2; if pad: i += m
-                # We need to calculate 'm' for the BASE indices (0, 2, 4, ...)
-                m = (base_indices // final_w) % 2
+            # --- 关键修正 2：确定实际操作的目标索引 ---
+            # 原版：if pad: i += m。
+            # 意思是：如果宽度是偶数且当前在奇数行，索引 +1
+            shifts = (pad & (m == 1)).long()
+            target_indices = base_indices + shifts
 
-                # Where m=1, the base index is shifted by 1.
-                shift_mask = m == 1
-                final_indices[shift_mask] = base_indices[shift_mask] + 1
-                # Where m=0, the base index remains the same (shift 0).
+            # 边界安全检查 (防止索引越界)
+            valid_mask = target_indices < N
+            target_indices = target_indices[valid_mask]
+            m = m[valid_mask]  # 对应的 m 也需要筛选
 
-                # Example for final_w=4:
-                # Base i: 0, 2, 4, 6, 8, 10, 12, 14
-                # Row:    0, 0, 1, 1, 2, 2,  3,  3
-                # m:      0, 0, 1, 1, 0, 0,  1,  1
-                # Final i:0, 2, 5, 7, 8, 10, 13, 15  <- This accurately recreates the indices.
+            # 6. 应用抖动决策
+            # 我们需要检查目标位置的 v1/v2 条件
+            # 这里的逻辑是：如果是奇数行(m=1)，检查 v1；如果是偶数行(m=0)，检查 v2
+            v1_vals = v1[target_indices]
+            v2_vals = v2[target_indices]
 
-            # Now, we create a mask to know which *original* indices (0 to N-1) were selected.
-            # mask_selected: True only for pixels that were modified by the loop.
-            mask_selected = torch.zeros(N, dtype=torch.bool, device=self.device)
+            # 决策掩码：满足条件则替换为 p2
+            should_swap = (m == 1) & v1_vals
+            should_swap |= (m == 0) & v2_vals
 
-            # Ensure indices are within bounds (should be, but safety check)
-            valid_indices = final_indices[final_indices < N]
-            mask_selected[valid_indices] = True
+            # 筛选出需要替换的索引
+            swap_indices = target_indices[should_swap]
 
-            # --- Determine the Dither Logic Mask (if selected, should we use p2?) ---
+            # 执行替换：将这些位置的颜色换成 p2
+            X_final[swap_indices] = colors_gpu[p2_idx[swap_indices]]
 
-            # The logic only applies to the *selected* indices:
-            # - m = (i // final_w) % 2 calculated from the *shifted* index 'i' (which is valid_indices)
-
-            # m_final: row parity of the *selected* pixels
-            m_final = (valid_indices // final_w) % 2
-
-            # Condition 1: m_final is 1 (odd row), AND v1 is True
-            cond_m1 = (m_final == 1) & v1[valid_indices]
-
-            # Condition 2: m_final is 0 (even row), AND v2 is True
-            cond_m0 = (m_final == 0) & v2[valid_indices]
-
-            # mask_p2_selected: True for selected pixels that should switch to p2
-            mask_p2_selected = cond_m1 | cond_m0
-
-            # --- Apply Dithering ---
-
-            # Start with the best color for ALL pixels
-            final_res = res.clone()
-
-            # Replace the selected pixels that meet the dither condition with p2
-            final_res[valid_indices[mask_p2_selected]] = res_p2[
-                valid_indices[mask_p2_selected]
-            ]
-
-            result_flat = final_res
+            result_flat = X_final
 
         elif self.dither == "bayer":
             # GPU Accelerated Bayer
