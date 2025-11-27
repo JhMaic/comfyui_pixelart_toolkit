@@ -28,7 +28,84 @@ except ImportError:
 from typing import Optional, Union, Tuple
 
 
-# --- GPU 辅助函数 ---
+@njit(fastmath=True)
+def _atkinson_euclidean_clamped_impl(img_pad, means, h, w):
+    """
+    基于欧几里得距离的 Atkinson 抖动 (带数值截断)
+    去除权重干扰，专注于几何距离，画面更纯净。
+    """
+    res_indices = np.zeros((h, w), dtype=np.int32)
+    n_colors = len(means)
+
+    # 颜色通道权重 (可选)
+    # 纯欧氏距离是 1,1,1。
+    # 为了更好的视觉效果，可以使用类似 Rec.601 的亮度权重 (R:0.3, G:0.59, B:0.11)
+    # 但为了还原 Pyxelate 原始风格，我们通常保持 1:1:1 或轻微加权
+    # 这里使用标准的 1.0，最稳健
+    w_r, w_g, w_b = 1.0, 1.0, 1.0
+
+    for y in range(h):
+        for x in range(1, w + 1):
+            # 获取当前像素
+            raw_r = img_pad[y, x, 0]
+            raw_g = img_pad[y, x, 1]
+            raw_b = img_pad[y, x, 2]
+
+            # --- 核心修复：严格截断 (Clamp) ---
+            # 无论误差如何累积，用于“比色”的数值必须限制在 0.0 ~ 1.0 之间
+            # 这能防止误差“过冲”导致算法匹配到错误的极端颜色 (例如蓝天里的亮粉色)
+            curr_r = min(1.0, max(0.0, raw_r))
+            curr_g = min(1.0, max(0.0, raw_g))
+            curr_b = min(1.0, max(0.0, raw_b))
+
+            best_idx = -1
+            min_dist = 1e20
+
+            # 寻找最近颜色
+            for k in range(n_colors):
+                d0 = curr_r - means[k, 0]
+                d1 = curr_g - means[k, 1]
+                d2 = curr_b - means[k, 2]
+
+                # 欧几里得距离平方
+                dist = (d0 * d0 * w_r) + (d1 * d1 * w_g) + (d2 * d2 * w_b)
+
+                if dist < min_dist:
+                    min_dist = dist
+                    best_idx = k
+
+            res_indices[y, x - 1] = best_idx
+
+            # --- 误差扩散 ---
+            center = means[best_idx]
+
+            # 关键：误差计算应该基于【当前像素的真实值(包含漂移)】与【新颜色】的差
+            # 这样可以保证总能量守恒
+            err_r = (raw_r - center[0]) / 8.0
+            err_g = (raw_g - center[1]) / 8.0
+            err_b = (raw_b - center[2]) / 8.0
+
+            # 扩散误差
+            img_pad[y, x + 1, 0] += err_r
+            img_pad[y, x + 1, 1] += err_g
+            img_pad[y, x + 1, 2] += err_b
+            img_pad[y, x + 2, 0] += err_r
+            img_pad[y, x + 2, 1] += err_g
+            img_pad[y, x + 2, 2] += err_b
+            img_pad[y + 1, x - 1, 0] += err_r
+            img_pad[y + 1, x - 1, 1] += err_g
+            img_pad[y + 1, x - 1, 2] += err_b
+            img_pad[y + 1, x, 0] += err_r
+            img_pad[y + 1, x, 1] += err_g
+            img_pad[y + 1, x, 2] += err_b
+            img_pad[y + 1, x + 1, 0] += err_r
+            img_pad[y + 1, x + 1, 1] += err_g
+            img_pad[y + 1, x + 1, 2] += err_b
+            img_pad[y + 2, x, 0] += err_r
+            img_pad[y + 2, x, 1] += err_g
+            img_pad[y + 2, x, 2] += err_b
+
+    return res_indices
 
 
 def rgb2hsv_torch(rgb: torch.Tensor) -> torch.Tensor:
@@ -959,50 +1036,16 @@ class Pyx(BaseEstimator, TransformerMixin):
         self, reshaped: np.ndarray, final_shape: Tuple[int, int]
     ) -> np.ndarray:
         final_h, final_w = final_shape
-        # Need strict implementation. Original code calls predict_proba inside loop which is terribly slow.
-        # Original code snippet provided in prompt had _dither_floyd optimized, but _dither_atkinson unoptimized in Pyx loop?
-        # Wait, the provided code snippet has `_dither_atkinson` logic inside `transform` block using loops.
-        # To strictly replicate, I must replicate that loop logic.
 
-        # Given the complexity, I will implement a simplified logical equivalent that runs on CPU
-        # using the Means directly, as implemented in the provided snippet "Atkinson-like algorithm" section.
-
+        # 准备数据
         X_ = reshaped.reshape(final_h, final_w, 3)
-        res = np.zeros((final_h + 2, final_w + 3), dtype=int)
-        X_pad = np.pad(X_, ((0, 2), (1, 2), (0, 0)), "reflect")
+        # Pad
+        X_pad = np.pad(X_, ((0, 2), (1, 2), (0, 0)), "reflect").astype(np.float64)
 
-        # Optimization: Don't call model.predict_proba in a loop if possible,
-        # but original does: `pred = self.model.predict_proba(X_[y, x, :3].reshape(-1, 3))`
-        # This is extremely slow. Since "Strict Algorithm" is requested, I must keep the math,
-        # but I can pre-calculate or vectorize? No, Atkinson modifies X_pad dynamically (Error Diffusion).
-        # We must use CPU loop.
+        # 只需中心点
+        means = self.model.means_.astype(np.float64)
 
-        means = self.model.means_
+        # 调用新的 Numba 函数
+        indices = _atkinson_euclidean_clamped_impl(X_pad, means, final_h, final_w)
 
-        # We pre-calculate distances or use a faster lookup?
-        # To strictly follow, we iterate.
-        colors = self.colors
-
-        for y in range(final_h):
-            for x in range(1, final_w + 1):
-                # Only need closest color logic? Original uses predict_proba argmax.
-                # Predict proba for GMM tied/spherical is approx Euclidean distance.
-                pixel = X_pad[y, x, :3].reshape(1, -1)
-
-                # Fast path: use distance instead of full GMM predict for speed if allowable
-                # But strictly:
-                pred = self.model.predict_proba(pixel)
-                idx = np.argmax(pred)
-
-                res[y, x] = idx
-                quant_error = (X_pad[y, x, :3] - means[idx]) / 8.0
-
-                X_pad[y, x + 1, :3] += quant_error
-                X_pad[y, x + 2, :3] += quant_error
-                X_pad[y + 1, x - 1, :3] += quant_error
-                X_pad[y + 1, x, :3] += quant_error
-                X_pad[y + 1, x + 1, :3] += quant_error
-                X_pad[y + 2, x, :3] += quant_error
-
-        res_crop = res[:final_h, 1 : final_w + 1]
-        return colors[res_crop.reshape(final_h * final_w)]
+        return self.colors[indices.reshape(final_h * final_w)]
