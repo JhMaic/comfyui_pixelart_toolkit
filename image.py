@@ -48,7 +48,7 @@ class PyxelateTransform(Image):
                         "tooltip": "Target width. Used ONLY if factor is 0.",
                     },
                 ),
-                "factor": (
+                "downscale_factor": (
                     "INT",
                     {
                         "default": 0,
@@ -60,26 +60,26 @@ class PyxelateTransform(Image):
                 ),
                 # Description: Resizes the pixels of the transformed image by upscale.
                 # Default is 1.
-                "upscale": (
+                "upscale_factor": (
                     "INT",
                     {
                         "default": 1,
                         "min": 1,
                         "max": 32,
                         "step": 1,
-                        "tooltip": "Resizes the pixels of the transformed image by upscale. Default is 1.",
+                        "tooltip": "Resizes the pixels of the transformed image by upscale. Default is 1 (do nothing). It will overwrite Height/Width if it is > 1.",
                     },
                 ),
                 # Description: The number of colors in the transformed image.
-                # If int > 2, searches automatically. Default is 8.
+                # If int > 2, searches automatically. Default is 32.
                 "palette": (
                     "INT",
                     {
-                        "default": 2,
+                        "default": 32,
                         "min": 2,
                         "max": 256,
                         "step": 1,
-                        "tooltip": "The number of colors in the transformed image. Pyxelate will search for this many colors automatically if int > 2. Default is 0.",
+                        "tooltip": "The number of colors in the transformed image. Pyxelate will search for this many colors automatically if int > 2. Default is 32.",
                     },
                 ),
                 # Description: The type of dithering to use on the transformed image.
@@ -145,10 +145,10 @@ class PyxelateTransform(Image):
     def process(
         self,
         image,
-        factor,
+        downscale_factor,
         height,
         width,
-        upscale,
+        upscale_factor,
         palette,
         dither,
         svd,
@@ -161,10 +161,10 @@ class PyxelateTransform(Image):
 
         # Logic Determination
         # We prepare arguments once, as they apply to the whole batch based on settings
-        if factor > 0:
+        if downscale_factor > 0:
             # Mode A: Use Factor (Ignore H/W)
             # We explicitly set h/w to None so Pyxelate logic purely uses factor
-            arg_factor = factor
+            arg_factor = downscale_factor
             arg_height = None
             arg_width = None
         else:
@@ -190,7 +190,7 @@ class PyxelateTransform(Image):
                 height=arg_height,
                 width=arg_width,
                 factor=arg_factor,
-                upscale=upscale,
+                upscale=upscale_factor,
                 palette=palette,
                 dither=dither,
                 svd=svd,

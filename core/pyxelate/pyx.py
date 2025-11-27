@@ -108,6 +108,80 @@ def _atkinson_euclidean_clamped_impl(img_pad, means, h, w):
     return res_indices
 
 
+@njit(fastmath=True)
+def _floyd_standard_impl(img_pad, means, h, w):
+    """
+    标准的 Floyd-Steinberg 抖动 (RGB 空间 + 截断)
+    这是最经典、最干净的实现方式。
+    """
+    res_indices = np.zeros((h, w), dtype=np.int32)
+    n_colors = len(means)
+
+    for y in range(h):
+        for x in range(1, w + 1):
+            # 获取当前像素
+            raw_r = img_pad[y, x, 0]
+            raw_g = img_pad[y, x, 1]
+            raw_b = img_pad[y, x, 2]
+
+            # --- 关键：Clamp (截断) ---
+            # 强制将像素拉回 0-1 范围，根除噪点
+            curr_r = min(1.0, max(0.0, raw_r))
+            curr_g = min(1.0, max(0.0, raw_g))
+            curr_b = min(1.0, max(0.0, raw_b))
+
+            # --- 寻找最近颜色 (Euclidean) ---
+            best_idx = -1
+            min_dist = 1e20
+
+            for k in range(n_colors):
+                d0 = curr_r - means[k, 0]
+                d1 = curr_g - means[k, 1]
+                d2 = curr_b - means[k, 2]
+                # 纯距离比较
+                dist = d0 * d0 + d1 * d1 + d2 * d2
+
+                if dist < min_dist:
+                    min_dist = dist
+                    best_idx = k
+
+            res_indices[y, x - 1] = best_idx
+            center = means[best_idx]
+
+            # --- 计算误差 ---
+            # Error = 原始值(包含漂移) - 新颜色
+            # 保持能量守恒
+            err_r = (raw_r - center[0]) / 16.0
+            err_g = (raw_g - center[1]) / 16.0
+            err_b = (raw_b - center[2]) / 16.0
+
+            # --- 扩散误差 (Floyd Kernel) ---
+            #      X   7
+            #  3   5   1
+
+            # 右 (x+1, y)
+            img_pad[y, x + 1, 0] += err_r * 7
+            img_pad[y, x + 1, 1] += err_g * 7
+            img_pad[y, x + 1, 2] += err_b * 7
+
+            # 左下 (x-1, y+1)
+            img_pad[y + 1, x - 1, 0] += err_r * 3
+            img_pad[y + 1, x - 1, 1] += err_g * 3
+            img_pad[y + 1, x - 1, 2] += err_b * 3
+
+            # 下 (x, y+1)
+            img_pad[y + 1, x, 0] += err_r * 5
+            img_pad[y + 1, x, 1] += err_g * 5
+            img_pad[y + 1, x, 2] += err_b * 5
+
+            # 右下 (x+1, y+1)
+            img_pad[y + 1, x + 1, 0] += err_r
+            img_pad[y + 1, x + 1, 1] += err_g
+            img_pad[y + 1, x + 1, 2] += err_b
+
+    return res_indices
+
+
 def rgb2hsv_torch(rgb: torch.Tensor) -> torch.Tensor:
     cmax, cmax_idx = torch.max(rgb, dim=1, keepdim=True)
     cmin = torch.min(rgb, dim=1, keepdim=True)[0]
@@ -1000,37 +1074,21 @@ class Pyx(BaseEstimator, TransformerMixin):
         self, reshaped: np.ndarray, final_shape: Tuple[int, int]
     ) -> np.ndarray:
         final_h, final_w = final_shape
-        probs = self.model.predict_proba(reshaped)
-        # Numba function strict logic
-        probs = np.array(
-            [probs[:, i].reshape((final_h, final_w)) for i in range(len(self.colors))]
-        )
 
-        @njit()
-        def _wrapper(probs, final_h, final_w):
-            probs = np.power(probs, (1.0 / 6.0))
-            res = np.zeros((final_h, final_w), dtype=np.int8)
-            for y in range(final_h - 1):
-                for x in range(1, final_w - 1):
-                    quant_error = probs[:, y, x] / 16.0
-                    res[y, x] = np.argmax(quant_error)
-                    quant_error[res[y, x]] = 0.0
-                    probs[:, y, x + 1] += quant_error * 7.0
-                    probs[:, y + 1, x - 1] += quant_error * 3.0
-                    probs[:, y + 1, x] += quant_error * 5.0
-                    probs[:, y + 1, x + 1] += quant_error
-            # fix edges
-            x = final_w - 1
-            for y in range(final_h):
-                res[y, x] = np.argmax(probs[:, y, x])
-                res[y, 0] = np.argmax(probs[:, y, 0])
-            y = final_h - 1
-            for x in range(1, final_w - 1):
-                res[y, x] = np.argmax(probs[:, y, x])
-            return res
+        # 准备数据
+        X_ = reshaped.reshape(final_h, final_w, 3)
 
-        res = _wrapper(probs, final_h, final_w)
-        return self.colors[res.reshape(final_h * final_w)]
+        # Pad: Floyd 需要右边和下边的空间
+        # 我们使用统一的 padding 方式，确保涵盖边缘
+        X_pad = np.pad(X_, ((0, 2), (1, 2), (0, 0)), "reflect").astype(np.float64)
+
+        # 获取调色板
+        means = self.model.means_.astype(np.float64)
+
+        # 执行标准 Floyd 算法
+        indices = _floyd_standard_impl(X_pad, means, final_h, final_w)
+
+        return self.colors[indices.reshape(final_h * final_w)]
 
     def _dither_atkinson(
         self, reshaped: np.ndarray, final_shape: Tuple[int, int]
