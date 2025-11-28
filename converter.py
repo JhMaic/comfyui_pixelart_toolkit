@@ -1,5 +1,5 @@
 class Converter:
-    CATEGORY = "💫PixelUtils/Python Converter Wrapper"
+    CATEGORY = "💫PixelToolkit/Python Converter Wrapper"
 
 
 class ToIntNode(Converter):

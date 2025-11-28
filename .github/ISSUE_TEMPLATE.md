@@ -1,4 +1,4 @@
-* comfyui_pixelart_utils version:
+* comfyui_pixelart_toolkit version:
 * Python version:
 * Operating System:
 

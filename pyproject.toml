@@ -3,7 +3,7 @@ requires = ["setuptools>=70.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "comfyui_pixelart_utils"
+name = "comfyui_pixelart_toolkit"
 version = "0.0.1"
 description = "TODO"
 authors = [
@@ -38,17 +38,17 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/JhMaic/comfyui_pixelart_utils"
-BugTracker = "https://github.com/JhMaic/comfyui_pixelart_utils/issues"
-Documentation = "https://github.com/JhMaic/comfyui_pixelart_utils/wiki"
+Repository = "https://github.com/JhMaic/comfyui_pixelart_toolkit"
+BugTracker = "https://github.com/JhMaic/comfyui_pixelart_toolkit/issues"
+Documentation = "https://github.com/JhMaic/comfyui_pixelart_toolkit/wiki"
 
 
 [tool.comfy]
 PublisherId = "JhMaic"
-DisplayName = "comfyui_pixelart_utils"
+DisplayName = "comfyui_pixelart_toolkit"
 Icon = ""
 Tags = []
-Repository = "https://github.com/JhMaic/comfyui_pixelart_utils"
+Repository = "https://github.com/JhMaic/comfyui_pixelart_toolkit"
 
 includes = []
 

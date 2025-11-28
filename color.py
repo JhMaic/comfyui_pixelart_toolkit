@@ -2,7 +2,7 @@ import torch
 
 
 class Color:
-    CATEGORY = "💫PixelUtils/Color"
+    CATEGORY = "💫PixelToolkit/Color"
 
 
 class PickPixelColorAtPositionNode(Color):

@@ -5,7 +5,7 @@ from .core.pyxelate import Pyx
 
 
 class Image:
-    CATEGORY = "💫PixelUtils/Image"
+    CATEGORY = "💫PixelToolkit/Image"
 
 
 class PyxelateTransformNode(Image):

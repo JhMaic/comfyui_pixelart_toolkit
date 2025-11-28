@@ -4,7 +4,7 @@ import torch
 
 
 class Mask:
-    CATEGORY = "💫PixelUtils/Mask"
+    CATEGORY = "💫PixelToolkit/Mask"
 
 
 class MaskHandleIsolatedPixels(Mask):

@@ -1,4 +1,4 @@
-# comfyui_pixelart_utils
+# comfyui_pixelart_toolkit
 
 TODO
 
@@ -21,7 +21,7 @@ TODO
 To install the dev dependencies and pre-commit (will run the ruff hook), do:
 
 ```bash
-cd comfyui_pixelart_utils
+cd comfyui_pixelart_toolkit
 pip install -e .[dev]
 pre-commit install
 ```
@@ -42,7 +42,7 @@ git push
 
 ## Writing custom nodes
 
-An example custom node is located in [node.py](src/comfyui_pixelart_utils/nodes.py). To learn more, read the [docs](https://docs.comfy.org/essentials/custom_node_overview).
+An example custom node is located in [node.py](src/comfyui_pixelart_toolkit/nodes.py). To learn more, read the [docs](https://docs.comfy.org/essentials/custom_node_overview).
 
 
 ## Tests

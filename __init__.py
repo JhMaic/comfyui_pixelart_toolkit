@@ -1,4 +1,4 @@
-"""Top-level package for comfyui_pixelart_utils."""
+"""Top-level package for comfyui_pixelart_toolkit."""
 
 __author__ = """Justin Chan"""
 __email__ = "owcin.cjh@gmail.com"
@@ -50,7 +50,7 @@ if need_install:
     install_requirements()
 
 # 这里设置你的节点存放的子目录名
-NODE_DIR_NAME = "./src/comfyui_pixelart_utils"
+NODE_DIR_NAME = "./src/comfyui_pixelart_toolkit"
 
 # 最终导出的映射字典
 NODE_CLASS_MAPPINGS = {}
@@ -61,7 +61,7 @@ def load_nodes():
     # 获取当前文件所在目录
     current_dir = os.path.dirname(__file__)
 
-    # 获取当前包名 (即 comfyui_pixelart_utils)
+    # 获取当前包名 (即 comfyui_pixelart_toolkit)
     package_name = __name__
 
     # 扫描当前目录下的所有 .py 文件

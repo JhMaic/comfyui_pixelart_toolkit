@@ -145,7 +145,7 @@ wheels = [
 ]
 
 [[package]]
-name = "comfyui-pixelart-utils"
+name = "comfyui-pixelart-toolkit"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [

@@ -7,7 +7,7 @@ from .core.filters import KuwaharaFilter, FilterWrapper, MorphFilter
 
 
 class FilterNode(ABC):
-    CATEGORY = "💫PixelUtils/Filters"
+    CATEGORY = "💫PixelToolkit/Filters"
 
     RETURN_TYPES = ("IMAGE", "PX_FILTER")
     RETURN_NAMES = ("image", "px_filter")
