@@ -25,7 +25,7 @@ except ImportError:
         pass
 
 
-from typing import Optional, Union, Tuple
+from typing import Optional, Union, Tuple, Callable
 
 
 @njit(fastmath=True)
@@ -391,9 +391,6 @@ class Pyx(BaseEstimator, TransformerMixin):
     DITHER_AUTO_SIZE_LIMIT_LO = 16
     DITHER_AUTO_COLOR_LIMIT = 8
     DITHER_NAIVE_BOOST = 1.33
-    SVD_N_COMPONENTS = 32
-    SVD_MAX_ITER = 16
-    SVD_RANDOM_STATE = 1234
 
     # DITHER_BAYER_MATRIX converted to Torch in init
 
@@ -407,8 +404,8 @@ class Pyx(BaseEstimator, TransformerMixin):
         palette: Union[int, BasePalette] = 8,
         dither: Optional[str] = "none",
         sobel: int = 3,
-        svd: bool = True,
         alpha: float = 0.6,
+        filter_obj: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     ) -> None:
 
         # --- Check Logic Same as Original ---
@@ -445,7 +442,7 @@ class Pyx(BaseEstimator, TransformerMixin):
                 PyxWarning,
             )
         self.depth = depth
-
+        self.filter_obj = filter_obj
         self.palette = palette
         self.find_palette = isinstance(self.palette, (int, float))
 
@@ -463,7 +460,6 @@ class Pyx(BaseEstimator, TransformerMixin):
             "atkinson",
         ), "Unknown dithering algorithm!"
         self.dither = dither
-        self.svd = bool(svd)
         self.alpha = float(alpha)
 
         # Instantiate BGM model (CPU based)
@@ -741,30 +737,6 @@ class Pyx(BaseEstimator, TransformerMixin):
 
         return torch.cat([rgb_new, alpha], dim=1)
 
-    def _svd_gpu(self, x: torch.Tensor) -> torch.Tensor:
-        """SVD using PyTorch"""
-        b, c, h, w = x.shape
-        if self.SVD_N_COMPONENTS >= h - 1 or self.SVD_N_COMPONENTS >= w - 1:
-            return x
-
-        res = []
-        for i in range(b):
-            img = x[i]  # [3, H, W]
-            channels = []
-            for ch in range(3):
-                U, S, V = torch.svd_lowrank(
-                    img[ch], q=self.SVD_N_COMPONENTS, niter=self.SVD_MAX_ITER
-                )
-                # Reconstruct: U * diag(S) * V.t()
-                # torch.svd_lowrank returns V not V.T usually in math, check docs.
-                # U: (M, q), S: (q), V: (N, q). A ~= U @ diag(S) @ V.T
-                rec = torch.matmul(torch.matmul(U, torch.diag(S)), V.t())
-                channels.append(rec)
-            res.append(torch.stack(channels))
-
-        res = torch.stack(res)
-        return torch.clamp(res, 0.0, 1.0)
-
     def transform(self, X: Union[np.ndarray, torch.Tensor], y=None) -> torch.Tensor:
         """
         Transform image.
@@ -821,11 +793,7 @@ class Pyx(BaseEstimator, TransformerMixin):
         )
         X_curr = torch.clamp(X_curr, 0, 1)
 
-        # --- 5. SVD (GPU) ---
-        if self.svd:
-            X_curr = self._svd_gpu(X_curr)
-
-        # --- 6. CLAHE (CPU Bottleneck - Strict Algorithm) ---
+        # --- 5. CLAHE (CPU Bottleneck - Strict Algorithm) ---
         # Need to move to CPU, apply CLAHE, move back
         X_np = X_curr.permute(0, 2, 3, 1).cpu().numpy()  # [B, H, W, 3]
         X_clahe = []
@@ -836,6 +804,11 @@ class Pyx(BaseEstimator, TransformerMixin):
         X_curr = torch.tensor(
             np.stack(X_clahe), device=self.device, dtype=torch.float32
         ).permute(0, 3, 1, 2)
+
+        # --- 6. Apply Filter ---
+        if self.filter_obj is not None:
+            X_curr = self.filter_obj(X_curr)
+            X_curr = torch.clamp(X_curr, 0.0, 1.0)
 
         # --- 7. Brightness Adjust (GPU) ---
         # RGB -> HSV

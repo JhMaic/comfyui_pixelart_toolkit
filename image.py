@@ -1,14 +1,14 @@
 import numpy as np
 import torch
 
-from .core.pyxelate.pyx import Pyx
+from .core.pyxelate import Pyx
 
 
 class Image:
     CATEGORY = "💫PixelUtils/Image"
 
 
-class PyxelateTransform(Image):
+class PyxelateTransformNode(Image):
     # -------------------------------------------------------------------
     # Node Description
     # -------------------------------------------------------------------
@@ -91,15 +91,6 @@ class PyxelateTransform(Image):
                         "tooltip": "The type of dithering to use. 'none' (default), 'naive' (for alpha), 'bayer' (fastest), 'floyd' (slowest), 'atkinson' (slowest).",
                     },
                 ),
-                # Description: Apply a truncated SVD (n_components=32) on each RGB channel as a form of low-pass filter.
-                # Default is False.
-                "svd": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                        "tooltip": "Apply a truncated SVD (n_components=32) on each RGB channel as a form of low-pass filter. Default is False.",
-                    },
-                ),
                 # Description: For images with transparency, the transformed image's pixel will be either visible/invisible above/below this threshold.
                 # Default is 0.6.
                 "alpha": (
@@ -136,7 +127,10 @@ class PyxelateTransform(Image):
                         "tooltip": "How many times should the Pyxelate algorithm be applied to downsample the image. More iteratrions will result in blockier aesthatics. Must be a positive int, although it is really time consuming and should never be more than 3. Raise it only for really small images. Default is 1",
                     },
                 ),
-            }
+            },
+            "optional": {
+                "px_filter": ("PX_FILTER",),
+            },
         }
 
     RETURN_TYPES = ("IMAGE",)
@@ -151,10 +145,10 @@ class PyxelateTransform(Image):
         upscale_factor,
         palette,
         dither,
-        svd,
         alpha,
         sobel,
         depth,
+        px_filter=None,
     ):
 
         results = []
@@ -193,10 +187,10 @@ class PyxelateTransform(Image):
                 upscale=upscale_factor,
                 palette=palette,
                 dither=dither,
-                svd=svd,
                 alpha=alpha,
                 sobel=sobel,
                 depth=depth,
+                filter_obj=px_filter,
             )
 
             # Transform

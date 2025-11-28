@@ -5,7 +5,7 @@ class Color:
     CATEGORY = "💫PixelUtils/Color"
 
 
-class PickPixelColorAtPosition(Color):
+class PickPixelColorAtPositionNode(Color):
     title = "Pick Color At Position"
 
     @classmethod
@@ -65,7 +65,7 @@ import numpy as np
 from PIL import Image
 
 
-class PixelArtReduceColors(Color):
+class PixelArtReduceColorsNode(Color):
     DESCRIPTION = """
        Reduces the color palette of an image (RGB or RGBA) to a fixed number of colors.
        Specifically optimized for Pixel Art.
@@ -183,7 +183,7 @@ class PixelArtReduceColors(Color):
         return (torch.stack(result_images),)
 
 
-class ColorConverter(Color):
+class ColorConverterNode(Color):
     # -------------------------------------------------------------------
     # Node Description
     # -------------------------------------------------------------------

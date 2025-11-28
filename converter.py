@@ -2,7 +2,7 @@ class Converter:
     CATEGORY = "💫PixelUtils/Python Converter Wrapper"
 
 
-class ToInt(Converter):
+class ToIntNode(Converter):
     title = "int(any, base)"
 
     @classmethod
@@ -23,7 +23,7 @@ class ToInt(Converter):
         return (int(any, base),)
 
 
-class ToFloat(Converter):
+class ToFloatNode(Converter):
     title = "float(any)"
 
     @classmethod
