@@ -1,13 +1,78 @@
+from abc import ABC, abstractmethod
+from typing import Callable, Optional, override
+
 import torch
 
-from .core.filters import KuwaharaFilter
+from .core.filters import KuwaharaFilter, FilterWrapper
 
 
-class Filter:
+class FilterNode(ABC):
     CATEGORY = "💫PixelUtils/Filters"
 
+    RETURN_TYPES = ("IMAGE", "PX_FILTER")
+    RETURN_NAMES = ("image", "px_filter")
+    FUNCTION = "exec"
 
-class KuwaharaNode(Filter):
+    @classmethod
+    def build_inputs(cls, specific_inputs: dict):
+        if "required" not in specific_inputs:
+            specific_inputs["required"] = {}
+
+        if "optional" not in specific_inputs:
+            specific_inputs["optional"] = {}
+
+        specific_inputs["optional"].update(
+            {
+                "image": (
+                    "IMAGE",
+                    {"tooltip": "Optional. Input image for preview chaining."},
+                ),
+                "px_filter": (
+                    "PX_FILTER",
+                    {"tooltip": "Optional. Previous filter to chain with."},
+                ),
+            }
+        )
+
+        return specific_inputs
+
+    @abstractmethod
+    def init_filter(self, **kwargs) -> FilterWrapper:
+        pass
+
+    def exec(
+        self,
+        image: Optional[torch.Tensor] = None,
+        px_filter: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+        **kwargs,
+    ) -> tuple[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]]:
+        # Instantiate the filter wrapper (logic carrier)
+        filter_obj = self.init_filter(**kwargs)
+
+        # If it has previous filter, set it.
+        if px_filter:
+            filter_obj.set_previous_filter(filter_obj)
+
+        preview_result = None
+        # Preview logic: Apply the filter immediately if an image is provided
+        if image is not None:
+            # Ensure processing happens on the correct device (GPU if available)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            # Convert ComfyUI format [B, H, W, C] to PyTorch format [B, C, H, W]
+            img_t = image.permute(0, 3, 1, 2).to(device)
+
+            # Apply the filter logic
+            processed = filter_obj(img_t)
+
+            # Convert back to ComfyUI format [B, H, W, C] and move to CPU
+            preview_result = processed.permute(0, 2, 3, 1).cpu()
+
+        # Return the preview (or None) and the filter object itself
+        return (preview_result, filter_obj)
+
+
+class KuwaharaNode(FilterNode):
     """
     Kuwahara Filter Node for Pyxelate.
 
@@ -37,59 +102,33 @@ class KuwaharaNode(Filter):
 
     @classmethod
     def INPUT_TYPES(s):
-        return {
-            "required": {
-                # radius: The most important parameter.
-                # A value of 2 corresponds to a 5x5 scanning window.
-                "radius": (
-                    "INT",
-                    {
-                        "default": 2,
-                        "min": 1,
-                        "max": 10,
-                        "step": 1,
-                        "tooltip": (
-                            "The radius of the sliding window. \n"
-                            "1 (Weak): Removes pixel noise, keeps tiny details. \n"
-                            "2-3 (Balanced): Best for Pixel Art. Creates a clean 'painterly' look. \n"
-                            "4+ (Strong): Very abstract, blocky, and loses shape definitions."
-                        ),
-                    },
-                ),
-            },
-            "optional": {
-                # image: Optional input for real-time previewing.
-                "image": (
-                    "IMAGE",
-                    {
-                        "tooltip": "Optional input image for previewing the filter effect."
-                    },
-                ),
-            },
-        }
+        return s.build_inputs(
+            {
+                "required": {
+                    # radius: The most important parameter.
+                    # A value of 2 corresponds to a 5x5 scanning window.
+                    "radius": (
+                        "INT",
+                        {
+                            "default": 2,
+                            "min": 1,
+                            "max": 10,
+                            "step": 1,
+                            "tooltip": (
+                                "The window radius. E.g., 2 specifies a 5x5 window ((2*2)+1). \n"
+                                "1 (Weak): Removes pixel noise, keeps tiny details. \n"
+                                "2-3 (Balanced): Best for Pixel Art. Creates a clean 'painterly' look. \n"
+                                "4+ (Strong): Very abstract, blocky, and loses shape definitions."
+                            ),
+                        },
+                    ),
+                },
+            }
+        )
 
     RETURN_TYPES = ("IMAGE", "PX_FILTER")
     RETURN_NAMES = ("image", "px_filter")
-    FUNCTION = "get_filter"
 
-    def get_filter(self, radius, image=None):
-        # Instantiate the filter wrapper (logic carrier)
-        filter_obj = KuwaharaFilter(radius)
-
-        # Preview logic: Apply the filter immediately if an image is provided
-        preview_result = None
-        if image is not None:
-            # Ensure processing happens on the correct device (GPU if available)
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-            # Convert ComfyUI format [B, H, W, C] to PyTorch format [B, C, H, W]
-            img_t = image.permute(0, 3, 1, 2).to(device)
-
-            # Apply the filter logic
-            processed = filter_obj(img_t)
-
-            # Convert back to ComfyUI format [B, H, W, C] and move to CPU
-            preview_result = processed.permute(0, 2, 3, 1).cpu()
-
-        # Return the preview (or None) and the filter object itself
-        return (preview_result, filter_obj)
+    @override
+    def init_filter(self, radius: int) -> FilterWrapper:
+        return KuwaharaFilter(radius)

@@ -175,6 +175,11 @@ class PyxelateTransformNode(Image):
                 arg_height = height if height > 0 else None
                 arg_width = width if width > 0 else None
 
+            if upscale_factor > 0:
+                arg_factor = 1
+                arg_height = None
+                arg_width = None
+
         for tensor_img in image:
             # Tensor (0.0-1.0) -> Numpy uint8 (0-255)
             img_np = (tensor_img.numpy() * 255).astype(np.uint8)

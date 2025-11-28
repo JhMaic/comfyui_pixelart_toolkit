@@ -805,12 +805,7 @@ class Pyx(BaseEstimator, TransformerMixin):
             np.stack(X_clahe), device=self.device, dtype=torch.float32
         ).permute(0, 3, 1, 2)
 
-        # --- 6. Apply Filter ---
-        if self.filter_obj is not None:
-            X_curr = self.filter_obj(X_curr)
-            X_curr = torch.clamp(X_curr, 0.0, 1.0)
-
-        # --- 7. Brightness Adjust (GPU) ---
+        # --- 6. Brightness Adjust (GPU) ---
         # RGB -> HSV
         X_flat = X_curr.permute(0, 2, 3, 1).reshape(-1, 3)
         X_hsv = (
@@ -829,6 +824,11 @@ class Pyx(BaseEstimator, TransformerMixin):
             .view(b, final_processing_h, final_processing_w, 3)
             .permute(0, 3, 1, 2)
         )
+
+        # --- 7. Apply Filter ---
+        if self.filter_obj is not None:
+            X_curr = self.filter_obj(X_curr)
+            X_curr = torch.clamp(X_curr, 0.0, 1.0)
 
         # --- 8. Pyxelate Loop (GPU) ---
         for _ in range(self.depth):

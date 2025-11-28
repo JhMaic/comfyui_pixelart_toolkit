@@ -78,14 +78,20 @@ def load_nodes():
         module_name = filename[:-3]  # 去掉 .py
 
         try:
-            # 【关键修复】
-            # 使用 import_module 进行相对导入 (例如: .image)
-            # 这样 Python 知道它是包的一部分，image.py 里的 from .core 就能工作了
+
             module = importlib.import_module(f".{module_name}", package=package_name)
 
             # 扫描模块中的类
             for name, cls in inspect.getmembers(module, inspect.isclass):
-                if hasattr(cls, "INPUT_TYPES") and hasattr(cls, "FUNCTION"):
+                if (
+                    hasattr(cls, "INPUT_TYPES")
+                    and hasattr(cls, "FUNCTION")
+                    and (
+                        hasattr(cls, "Title")
+                        or hasattr(cls, "TITLE")
+                        or hasattr(cls, "title")
+                    )
+                ):
 
                     # 确定节点 ID
                     node_key = name
