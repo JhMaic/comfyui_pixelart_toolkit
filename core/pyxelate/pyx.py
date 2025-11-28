@@ -33,29 +33,29 @@ from typing import Optional, Union, Tuple
 @njit(fastmath=True)
 def _atkinson_euclidean_clamped_impl(img_pad, means, h, w):
     """
-    基于欧几里得距离的 Atkinson 抖动 (带数值截断)
-    去除权重干扰，专注于几何距离，画面更纯净。
+    Atkinson dithering based on Euclidean distance (with value clamping)
+    Removes weight interference, focuses on geometric distance, cleaner image.
     """
     res_indices = np.zeros((h, w), dtype=np.int32)
     n_colors = len(means)
 
-    # 颜色通道权重 (可选)
-    # 纯欧氏距离是 1,1,1。
-    # 为了更好的视觉效果，可以使用类似 Rec.601 的亮度权重 (R:0.3, G:0.59, B:0.11)
-    # 但为了还原 Pyxelate 原始风格，我们通常保持 1:1:1 或轻微加权
-    # 这里使用标准的 1.0，最稳健
+    # Color channel weights (optional)
+    # Pure Euclidean distance is 1,1,1.
+    # For better visual effects, could use Rec.601 luminance weights (R:0.3, G:0.59, B:0.11)
+    # But to restore Pyxelate's original style, we typically keep 1:1:1 or slight weighting
+    # Using standard 1.0 here, most robust
     w_r, w_g, w_b = 1.0, 1.0, 1.0
 
     for y in range(h):
         for x in range(1, w + 1):
-            # 获取当前像素
+            # Get current pixel
             raw_r = img_pad[y, x, 0]
             raw_g = img_pad[y, x, 1]
             raw_b = img_pad[y, x, 2]
 
-            # --- 核心修复：严格截断 (Clamp) ---
-            # 无论误差如何累积，用于“比色”的数值必须限制在 0.0 ~ 1.0 之间
-            # 这能防止误差“过冲”导致算法匹配到错误的极端颜色 (例如蓝天里的亮粉色)
+            # --- Core fix: Strict clamping ---
+            # Regardless of error accumulation, values used for "color matching" must be limited to 0.0 ~ 1.0
+            # This prevents error "overshoot" from causing the algorithm to match wrong extreme colors (e.g., bright pink in blue sky)
             curr_r = min(1.0, max(0.0, raw_r))
             curr_g = min(1.0, max(0.0, raw_g))
             curr_b = min(1.0, max(0.0, raw_b))
@@ -63,13 +63,13 @@ def _atkinson_euclidean_clamped_impl(img_pad, means, h, w):
             best_idx = -1
             min_dist = 1e20
 
-            # 寻找最近颜色
+            # Find nearest color
             for k in range(n_colors):
                 d0 = curr_r - means[k, 0]
                 d1 = curr_g - means[k, 1]
                 d2 = curr_b - means[k, 2]
 
-                # 欧几里得距离平方
+                # Euclidean distance squared
                 dist = (d0 * d0 * w_r) + (d1 * d1 * w_g) + (d2 * d2 * w_b)
 
                 if dist < min_dist:
@@ -78,16 +78,16 @@ def _atkinson_euclidean_clamped_impl(img_pad, means, h, w):
 
             res_indices[y, x - 1] = best_idx
 
-            # --- 误差扩散 ---
+            # --- Error diffusion ---
             center = means[best_idx]
 
-            # 关键：误差计算应该基于【当前像素的真实值(包含漂移)】与【新颜色】的差
-            # 这样可以保证总能量守恒
+            # Key: Error calculation should be based on [current pixel's true value (including drift)] vs [new color]
+            # This ensures total energy conservation
             err_r = (raw_r - center[0]) / 8.0
             err_g = (raw_g - center[1]) / 8.0
             err_b = (raw_b - center[2]) / 8.0
 
-            # 扩散误差
+            # Diffuse error
             img_pad[y, x + 1, 0] += err_r
             img_pad[y, x + 1, 1] += err_g
             img_pad[y, x + 1, 2] += err_b
@@ -113,26 +113,26 @@ def _atkinson_euclidean_clamped_impl(img_pad, means, h, w):
 @njit(fastmath=True)
 def _floyd_standard_impl(img_pad, means, h, w):
     """
-    标准的 Floyd-Steinberg 抖动 (RGB 空间 + 截断)
-    这是最经典、最干净的实现方式。
+    Standard Floyd-Steinberg dithering (RGB space + clamping)
+    This is the most classic, cleanest implementation.
     """
     res_indices = np.zeros((h, w), dtype=np.int32)
     n_colors = len(means)
 
     for y in range(h):
         for x in range(1, w + 1):
-            # 获取当前像素
+            # Get current pixel
             raw_r = img_pad[y, x, 0]
             raw_g = img_pad[y, x, 1]
             raw_b = img_pad[y, x, 2]
 
-            # --- 关键：Clamp (截断) ---
-            # 强制将像素拉回 0-1 范围，根除噪点
+            # --- Key: Clamp (truncation) ---
+            # Force pixels back to 0-1 range, eliminate noise
             curr_r = min(1.0, max(0.0, raw_r))
             curr_g = min(1.0, max(0.0, raw_g))
             curr_b = min(1.0, max(0.0, raw_b))
 
-            # --- 寻找最近颜色 (Euclidean) ---
+            # --- Find nearest color (Euclidean) ---
             best_idx = -1
             min_dist = 1e20
 
@@ -140,7 +140,7 @@ def _floyd_standard_impl(img_pad, means, h, w):
                 d0 = curr_r - means[k, 0]
                 d1 = curr_g - means[k, 1]
                 d2 = curr_b - means[k, 2]
-                # 纯距离比较
+                # Pure distance comparison
                 dist = d0 * d0 + d1 * d1 + d2 * d2
 
                 if dist < min_dist:
@@ -150,33 +150,33 @@ def _floyd_standard_impl(img_pad, means, h, w):
             res_indices[y, x - 1] = best_idx
             center = means[best_idx]
 
-            # --- 计算误差 ---
-            # Error = 原始值(包含漂移) - 新颜色
-            # 保持能量守恒
+            # --- Calculate error ---
+            # Error = Original value (including drift) - New color
+            # Maintain energy conservation
             err_r = (raw_r - center[0]) / 16.0
             err_g = (raw_g - center[1]) / 16.0
             err_b = (raw_b - center[2]) / 16.0
 
-            # --- 扩散误差 (Floyd Kernel) ---
+            # --- Diffuse error (Floyd Kernel) ---
             #      X   7
             #  3   5   1
 
-            # 右 (x+1, y)
+            # Right (x+1, y)
             img_pad[y, x + 1, 0] += err_r * 7
             img_pad[y, x + 1, 1] += err_g * 7
             img_pad[y, x + 1, 2] += err_b * 7
 
-            # 左下 (x-1, y+1)
+            # Bottom-left (x-1, y+1)
             img_pad[y + 1, x - 1, 0] += err_r * 3
             img_pad[y + 1, x - 1, 1] += err_g * 3
             img_pad[y + 1, x - 1, 2] += err_b * 3
 
-            # 下 (x, y+1)
+            # Bottom (x, y+1)
             img_pad[y + 1, x, 0] += err_r * 5
             img_pad[y + 1, x, 1] += err_g * 5
             img_pad[y + 1, x, 2] += err_b * 5
 
-            # 右下 (x+1, y+1)
+            # Bottom-right (x+1, y+1)
             img_pad[y + 1, x + 1, 0] += err_r
             img_pad[y + 1, x + 1, 1] += err_g
             img_pad[y + 1, x + 1, 2] += err_b
@@ -217,7 +217,7 @@ def rgb2hsv_torch(rgb: torch.Tensor) -> torch.Tensor:
 
 
 def hsv2rgb_torch(hsv: torch.Tensor) -> torch.Tensor:
-    """PyTorch 实现的 hsv2rgb"""
+    """PyTorch implementation of hsv2rgb"""
     h, s, v = hsv[:, 0:1], hsv[:, 1:2], hsv[:, 2:3]
     c = v * s
     x = c * (1 - torch.abs((h * 6) % 2 - 1))
@@ -279,7 +279,7 @@ class PyxWarning(Warning):
 class BGM(BayesianGaussianMixture):
     """
     Wrapper for BayesianGaussianMixture.
-    保持 CPU/Sklearn 实现，确保调色板生成的算法严格一致。
+    Maintains CPU/Sklearn implementation to ensure strict algorithmic consistency for palette generation.
     """
 
     MAX_ITER = 128
@@ -324,7 +324,7 @@ class BGM(BayesianGaussianMixture):
         n_samples, _ = X.shape
         resp = np.zeros((n_samples, self.n_components))
 
-        # 此处为了兼容 Pyx 的逻辑，如果传入的是 PyTorch tensor 转来的 numpy，需确保格式
+        # To maintain compatibility with Pyx logic, ensure format if input is numpy from PyTorch tensor
         if self.find_palette:
             label = (
                 KMeans(
@@ -874,25 +874,25 @@ class Pyx(BaseEstimator, TransformerMixin):
             )
 
         elif self.dither == "naive":
-            # 1. 获取概率 (CPU -> GPU)
-            # predict_proba 返回的是 numpy，需要转为 Tensor
+            # 1. Get probabilities (CPU -> GPU)
+            # predict_proba returns numpy, needs to be converted to Tensor
             probs_np = self.model.predict_proba(X_reshaped_np)  # [N, C]
             probs = torch.from_numpy(probs_np).to(self.device).float()
 
-            # 2. 找出第一选择 (p1) 和 第二选择 (p2)
-            # 获取最大概率和对应索引 (Best color)
+            # 2. Find first choice (p1) and second choice (p2)
+            # Get maximum probability and corresponding index (Best color)
             prob_p1, p1_idx = torch.max(probs, dim=1)
 
-            # --- 关键修正 1：计算阈值前，必须基于“第二大”概率 ---
-            # 将最大概率位置置 0，以便找到第二大的概率
+            # --- Key fix 1: Before calculating threshold, must be based on "second largest" probability ---
+            # Set maximum probability position to 0 to find second largest probability
             probs_temp = probs.clone()
             probs_temp.scatter_(1, p1_idx.unsqueeze(1), 0.0)
 
-            # 获取第二大概率和对应索引 (Second best color)
+            # Get second largest probability and corresponding index (Second best color)
             prob_p2, p2_idx = torch.max(probs_temp, dim=1)
 
-            # 3. 计算阈值
-            # 原版逻辑：v1 和 v2 是判断“第二选择”的概率是否足够大
+            # 3. Calculate threshold
+            # Original logic: v1 and v2 determine if "second choice" probability is large enough
             n_colors = len(colors_flat)
             threshold_v1 = 1.0 / (n_colors + 1)
             threshold_v2 = 1.0 / (n_colors * self.DITHER_NAIVE_BOOST + 1)
@@ -900,50 +900,50 @@ class Pyx(BaseEstimator, TransformerMixin):
             v1 = prob_p2 > threshold_v1
             v2 = prob_p2 > threshold_v2
 
-            # 4. 初始化结果为最佳颜色
-            # 此时 X_final 全是 p1 颜色
+            # 4. Initialize result to best color
+            # At this point X_final is all p1 colors
             X_final = colors_gpu[p1_idx]
 
-            # 5. 向量化棋盘格逻辑 (Checkerboard Pattern)
+            # 5. Vectorized checkerboard pattern logic
             N = len(X_final)
 
-            # 生成基础索引：0, 2, 4, ... (模拟 range(0, N, 2))
+            # Generate base indices: 0, 2, 4, ... (simulating range(0, N, 2))
             base_indices = torch.arange(0, N, 2, device=self.device)
 
-            # 计算行号和行的奇偶性 (m)
-            # 原版：m = (i // final_w) % 2。这里的 i 对应 base_indices
+            # Calculate row number and row parity (m)
+            # Original: m = (i // final_w) % 2. Here i corresponds to base_indices
             rows = base_indices // final_w
-            m = rows % 2  # 1 为奇数行，0 为偶数行
+            m = rows % 2  # 1 for odd rows, 0 for even rows
 
-            # 判断是否需要补位偏移 (pad)
-            # 原版：pad = not bool(final_w % 2)。如果宽度是偶数，则 pad 为 True
+            # Determine if padding offset is needed (pad)
+            # Original: pad = not bool(final_w % 2). If width is even, pad is True
             pad = final_w % 2 == 0
 
-            # --- 关键修正 2：确定实际操作的目标索引 ---
-            # 原版：if pad: i += m。
-            # 意思是：如果宽度是偶数且当前在奇数行，索引 +1
+            # --- Key fix 2: Determine actual target indices for operation ---
+            # Original: if pad: i += m.
+            # Meaning: If width is even and currently on odd row, index +1
             shifts = (pad & (m == 1)).long()
             target_indices = base_indices + shifts
 
-            # 边界安全检查 (防止索引越界)
+            # Boundary safety check (prevent index out of bounds)
             valid_mask = target_indices < N
             target_indices = target_indices[valid_mask]
-            m = m[valid_mask]  # 对应的 m 也需要筛选
+            m = m[valid_mask]  # Corresponding m also needs filtering
 
-            # 6. 应用抖动决策
-            # 我们需要检查目标位置的 v1/v2 条件
-            # 这里的逻辑是：如果是奇数行(m=1)，检查 v1；如果是偶数行(m=0)，检查 v2
+            # 6. Apply dithering decision
+            # Need to check v1/v2 conditions at target positions
+            # Logic: If odd row (m=1), check v1; if even row (m=0), check v2
             v1_vals = v1[target_indices]
             v2_vals = v2[target_indices]
 
-            # 决策掩码：满足条件则替换为 p2
+            # Decision mask: replace with p2 if condition is met
             should_swap = (m == 1) & v1_vals
             should_swap |= (m == 0) & v2_vals
 
-            # 筛选出需要替换的索引
+            # Filter out indices that need replacement
             swap_indices = target_indices[should_swap]
 
-            # 执行替换：将这些位置的颜色换成 p2
+            # Execute replacement: change these positions' colors to p2
             X_final[swap_indices] = colors_gpu[p2_idx[swap_indices]]
 
             result_flat = X_final
@@ -1051,17 +1051,17 @@ class Pyx(BaseEstimator, TransformerMixin):
     ) -> np.ndarray:
         final_h, final_w = final_shape
 
-        # 准备数据
+        # Prepare data
         X_ = reshaped.reshape(final_h, final_w, 3)
 
-        # Pad: Floyd 需要右边和下边的空间
-        # 我们使用统一的 padding 方式，确保涵盖边缘
+        # Pad: Floyd needs space on right and bottom
+        # Use unified padding method to ensure edge coverage
         X_pad = np.pad(X_, ((0, 2), (1, 2), (0, 0)), "reflect").astype(np.float64)
 
-        # 获取调色板
+        # Get palette
         means = self.model.means_.astype(np.float64)
 
-        # 执行标准 Floyd 算法
+        # Execute standard Floyd algorithm
         indices = _floyd_standard_impl(X_pad, means, final_h, final_w)
 
         return self.colors[indices.reshape(final_h * final_w)]
@@ -1071,15 +1071,15 @@ class Pyx(BaseEstimator, TransformerMixin):
     ) -> np.ndarray:
         final_h, final_w = final_shape
 
-        # 准备数据
+        # Prepare data
         X_ = reshaped.reshape(final_h, final_w, 3)
         # Pad
         X_pad = np.pad(X_, ((0, 2), (1, 2), (0, 0)), "reflect").astype(np.float64)
 
-        # 只需中心点
+        # Only need center points
         means = self.model.means_.astype(np.float64)
 
-        # 调用新的 Numba 函数
+        # Call new Numba function
         indices = _atkinson_euclidean_clamped_impl(X_pad, means, final_h, final_w)
 
         return self.colors[indices.reshape(final_h * final_w)]
