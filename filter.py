@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, override
+from typing import Optional, override
 
 import torch
 
-from .core.filters import KuwaharaFilter, FilterWrapper
+from .core.filters import KuwaharaFilter, FilterWrapper, MorphFilter
 
 
 class FilterNode(ABC):
@@ -25,7 +25,9 @@ class FilterNode(ABC):
             {
                 "image": (
                     "IMAGE",
-                    {"tooltip": "Optional. Input image for preview chaining."},
+                    {
+                        "tooltip": "Optional. Input image for preview chaining. Output Image is available only if this is set."
+                    },
                 ),
                 "px_filter": (
                     "PX_FILTER",
@@ -43,15 +45,15 @@ class FilterNode(ABC):
     def exec(
         self,
         image: Optional[torch.Tensor] = None,
-        px_filter: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+        px_filter: Optional[FilterWrapper] = None,
         **kwargs,
-    ) -> tuple[torch.Tensor, Callable[[torch.Tensor], torch.Tensor]]:
+    ) -> tuple[torch.Tensor, FilterWrapper]:
         # Instantiate the filter wrapper (logic carrier)
         filter_obj = self.init_filter(**kwargs)
 
         # If it has previous filter, set it.
         if px_filter:
-            filter_obj.set_previous_filter(filter_obj)
+            filter_obj.set_previous_filter(px_filter)
 
         preview_result = None
         # Preview logic: Apply the filter immediately if an image is provided
@@ -132,3 +134,49 @@ class KuwaharaNode(FilterNode):
     @override
     def init_filter(self, radius: int) -> FilterWrapper:
         return KuwaharaFilter(radius)
+
+
+class MorphNode(FilterNode):
+    """
+    Morphological Filter Node.
+    Uses mathematical morphology (Erosion/Dilation) to clean up noise.
+    """
+
+    TITLE = "Morph Filter"
+
+    DESCRIPTION = """
+    Applies Morphological operations to remove small noise patches.
+
+    - Open: Removes bright spots (salt noise) on dark background.
+    - Close: Removes dark spots (pepper noise) on bright background.
+    - Both: Removes both types (Strong cleaning).
+
+    """
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return s.build_inputs(
+            {
+                "required": {
+                    "operation": (
+                        ["open", "close", "both", "dilate", "erode"],
+                        {"default": "both"},
+                    ),
+                    "kernel_size": (
+                        "INT",
+                        {
+                            "default": 3,
+                            "min": 3,
+                            "max": 15,
+                            "step": 2,
+                            "tooltip": "Kernel size (odd number). 3 removes 1px dots, 5 removes larger blobs.",
+                        },
+                    ),
+                },
+            }
+        )
+
+    @override
+    def init_filter(self, operation: str, kernel_size: int) -> FilterWrapper:
+        # Pass parameters to the logic class
+        return MorphFilter(operation, kernel_size)

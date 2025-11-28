@@ -49,7 +49,7 @@ class MaskHandleIsolatedPixels(Mask):
                         "min": 1,
                         "max": 1024,
                         "step": 1,
-                        "tooltip": "Used only in Area mode. Max pixels to consider as noise.",
+                        "tooltip": "Used only in isolated_size mode. Max pixels to consider as noise.",
                     },
                 ),
                 # Parameter for "isolated_distance" mode
@@ -60,7 +60,7 @@ class MaskHandleIsolatedPixels(Mask):
                         "min": 1,
                         "max": 1024,
                         "step": 1,
-                        "tooltip": "Used only in Proximity mode. Search radius in pixels.",
+                        "tooltip": "Used only in isolated_distance mode. Search radius in pixels.",
                     },
                 ),
             }

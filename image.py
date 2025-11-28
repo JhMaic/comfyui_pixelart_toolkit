@@ -35,7 +35,7 @@ class PyxelateTransformNode(Image):
                         "min": 0,
                         "max": 4096,
                         "step": 8,
-                        "tooltip": "Target height. Used ONLY if factor is 0.",
+                        "tooltip": "Target height. Used ONLY if downscale_factor is 0 and upscale_factor is 1.",
                     },
                 ),
                 "width": (
@@ -45,7 +45,7 @@ class PyxelateTransformNode(Image):
                         "min": 0,
                         "max": 4096,
                         "step": 8,
-                        "tooltip": "Target width. Used ONLY if factor is 0.",
+                        "tooltip": "Target width. Used ONLY if downscale_factor is 0 and upscale_factor is 1.",
                     },
                 ),
                 "downscale_factor": (
@@ -115,6 +115,16 @@ class PyxelateTransformNode(Image):
                         "tooltip": "The size of the sobel operator (N*N area to calculate the gradients for downsampling), must be an int larger than 1. Default is 3, try 2 for a much faster but less accurate output.",
                     },
                 ),
+                "brightness": (
+                    "FLOAT",
+                    {
+                        "default": 1.19,
+                        "min": 0,
+                        "max": 2,
+                        "step": 0.01,
+                        "tooltip": "Increasing the brightness helps to improve brightness and reduce noise. The default value is 1.19.",
+                    },
+                ),
                 # Description: How many times should the Pyxelate algorithm be applied to downsample the image.
                 # Default is 1. Should never be more than 3.
                 "depth": (
@@ -129,7 +139,16 @@ class PyxelateTransformNode(Image):
                 ),
             },
             "optional": {
-                "px_filter": ("PX_FILTER",),
+                "style_image": (
+                    "IMAGE",
+                    {"tooltip": "Image for stylizing"},
+                ),
+                "px_filter": (
+                    "PX_FILTER",
+                    {
+                        "tooltip": "If you specify a filter, the transformer will execute before dither is performed."
+                    },
+                ),
             },
         }
 
@@ -148,7 +167,9 @@ class PyxelateTransformNode(Image):
         alpha,
         sobel,
         depth,
+        brightness,
         px_filter=None,
+        style_image=None,
     ):
 
         results = []
@@ -195,11 +216,15 @@ class PyxelateTransformNode(Image):
                 alpha=alpha,
                 sobel=sobel,
                 depth=depth,
+                brightness=brightness,
                 filter_obj=px_filter,
             )
 
             # Transform
-            processed_result = pyx_transformer.fit_transform(img_np)
+            if style_image is None:
+                processed_result = pyx_transformer.fit_transform(img_np)
+            else:
+                processed_result = pyx_transformer.fit(style_image).transform(img_np)
 
             if isinstance(processed_result, torch.Tensor):
                 processed_tensor = processed_result.detach().cpu().squeeze(0)

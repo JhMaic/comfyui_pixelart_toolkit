@@ -17,6 +17,8 @@ from sklearn.cluster import KMeans
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.mixture import BayesianGaussianMixture
 
+from ..filters import FilterWrapper
+
 try:
     from .pal import BasePalette
 except ImportError:
@@ -25,7 +27,7 @@ except ImportError:
         pass
 
 
-from typing import Optional, Union, Tuple, Callable
+from typing import Optional, Union, Tuple
 
 
 @njit(fastmath=True)
@@ -385,7 +387,6 @@ class Pyx(BaseEstimator, TransformerMixin):
 
     BGM_RESIZE = 256
     SCALE_RGB = 1.07
-    HIST_BRIGHTNESS = 1.19
     COLOR_QUANT = 8
     DITHER_AUTO_SIZE_LIMIT_HI = 512
     DITHER_AUTO_SIZE_LIMIT_LO = 16
@@ -405,7 +406,8 @@ class Pyx(BaseEstimator, TransformerMixin):
         dither: Optional[str] = "none",
         sobel: int = 3,
         alpha: float = 0.6,
-        filter_obj: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+        brightness: float = 1.19,
+        filter_obj: Optional[FilterWrapper] = None,
     ) -> None:
 
         # --- Check Logic Same as Original ---
@@ -445,6 +447,7 @@ class Pyx(BaseEstimator, TransformerMixin):
         self.filter_obj = filter_obj
         self.palette = palette
         self.find_palette = isinstance(self.palette, (int, float))
+        self.brightness = brightness
 
         if self.find_palette and palette < 2:
             raise ValueError("The minimum number of colors in a palette is 2")
@@ -815,7 +818,7 @@ class Pyx(BaseEstimator, TransformerMixin):
         )
 
         # Adjust V
-        X_hsv[:, 2:3, :, :] *= self.HIST_BRIGHTNESS
+        X_hsv[:, 2:3, :, :] *= self.brightness
 
         # HSV -> RGB
         X_flat_2 = torch.clamp(X_hsv, 0, 1).permute(0, 2, 3, 1).reshape(-1, 3)

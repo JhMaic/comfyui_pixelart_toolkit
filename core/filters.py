@@ -143,3 +143,52 @@ class KuwaharaFilter(FilterWrapper):
         output = torch.gather(stack_mean, 4, mask_gather).squeeze(-1)
 
         return output
+
+
+class MorphFilter(FilterWrapper):
+    def __init__(self, operation: str, kernel_size: int):
+        super().__init__()
+        self.operation = operation
+        # Ensure kernel size is odd for symmetric padding
+        self.kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
+
+    @override
+    def process(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Applies morphological operations using MaxPool.
+        Erosion = -MaxPool(-x)
+        """
+        # x: [B, C, H, W]
+        padding = self.kernel_size // 2
+
+        # Define helper functions for Erode/Dilate
+        def erode(img):
+            # Using max_pool2d with negative values to simulate min_pool
+            return -F.max_pool2d(
+                -img, kernel_size=self.kernel_size, stride=1, padding=padding
+            )
+
+        def dilate(img):
+            return F.max_pool2d(
+                img, kernel_size=self.kernel_size, stride=1, padding=padding
+            )
+
+        # Logic flow
+        out = x
+
+        # Operation: Open (Remove bright noise) -> Erode then Dilate
+        if self.operation == "open" or self.operation == "both":
+            out = dilate(erode(out))
+
+        # Operation: Close (Remove dark noise) -> Dilate then Erode
+        if self.operation == "close" or self.operation == "both":
+            out = erode(dilate(out))
+
+        # Raw operations
+        if self.operation == "dilate":
+            out = dilate(out)
+
+        if self.operation == "erode":
+            out = erode(out)
+
+        return out
